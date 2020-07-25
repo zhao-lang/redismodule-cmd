@@ -1,0 +1,8 @@
+[package]
+name = "redismodule_cmd"
+version = "0.0.1"
+authors = ["Zhao Lang <eltoshan@gmail.com>"]
+edition = "2018"
+
+[lib]
+crate-type=["lib"]
