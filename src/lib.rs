@@ -1,7 +1,8 @@
 extern crate redis_module;
 
-use std::any::Any;
+use std::any::{Any, type_name};
 use std::collections::HashMap;
+use std::fmt::Debug;
 use redis_module::{RedisError};
 
 #[derive(Debug, PartialEq)]
@@ -11,7 +12,7 @@ pub struct Command {
 }
 
 impl Command {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String) -> Self{
         Command {name, args: Vec::new()}
     }
 
@@ -32,96 +33,37 @@ impl Command {
         
         let res = HashMap::new();
 
-        // // parse args
-        // let next_arg = raw_args.next();
-        // for arg in self.args.iter() {
-        //     if arg.optional {
-        //         if next_arg.is_none() {
-        //             continue
-        //         }
-        //         if *next_arg.as_ref().unwrap() != arg.arg {
-        //             continue
-        //         }
-        //     } else {
-        //         if next_arg.is_none() {
-        //             return Err(RedisError::WrongArity)
-        //         }
-        //     }
-        //     let arg_name = next_arg.as_ref().unwrap().to_owned();
+        // parse args
+        let next_arg = raw_args.next();
+        for arg in self.args.iter() {
 
-        //     let next_val = raw_args.next();
-        //     if next_val.is_none() {
-        //         return Err(RedisError::WrongArity)
-        //     }
-        //     let next_val = next_val.unwrap();
-        //     if next_val.type_id() != arg.argtype {
-        //         return Err(RedisError::String(format!("Expected {:?}, got {:?}", arg.argtype, next_val.type_id())))
-        //     }
 
-        // }
+        }
 
         Ok(res)
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Arg {
-    StringArg(StringArg),
-    UintArg(UintArg),
-    IntArg(IntArg),
-    FloatArg(FloatArg),
-}
 
-
-#[derive(Debug, PartialEq)]
-pub struct StringArg {
+#[derive(Debug)]
+pub struct Arg {
     pub arg: String,
+    pub type_name: &'static str,
     pub optional: bool,
-    pub default: Option<String>,
+    pub default: Option<Box<dyn Any>>,
 }
 
-impl StringArg {
-    pub fn new(arg: String, optional: bool, default: Option<String>) -> Self {
-        StringArg {arg, optional, default}
+impl Arg {
+    pub fn new(arg: String, type_name: &'static str, optional: bool, default: Option<Box<dyn Any>>) -> Self {
+        Arg {arg, type_name, optional, default}
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct UintArg {
-    pub arg: String,
-    pub optional: bool,
-    pub default: Option<u64>,
-}
-
-impl UintArg {
-    pub fn new(arg: String, optional: bool, default: Option<u64>) -> Self {
-        UintArg {arg, optional, default}
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct IntArg {
-    pub arg: String,
-    pub optional: bool,
-    pub default: Option<i64>,
-}
-
-impl IntArg {
-    pub fn new(arg: String, optional: bool, default: Option<i64>) -> Self {
-        IntArg {arg, optional, default}
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct FloatArg {
-    pub arg: String,
-    pub optional: bool,
-    pub default: Option<f64>,
-}
-
-impl FloatArg {
-    pub fn new(arg: String, optional: bool, default: Option<f64>) -> Self {
-        FloatArg {arg, optional, default}
+impl std::cmp::PartialEq for Arg {
+    fn eq(&self, other: &Self) -> bool {
+        self.arg == other.arg &&
+        self.type_name == other.type_name &&
+        self.optional == other.optional
     }
 }
 
@@ -129,11 +71,11 @@ impl FloatArg {
 macro_rules! argument {
     ([
         $arg:expr,
-        $type:ident,
+        $type:ty,
         $optional:expr,
         $default:expr
     ]) => {
-        $crate::Arg::$type($crate::$type::new($arg.to_owned(), $optional, $default))
+        $crate::Arg::new($arg.to_owned(), std::any::type_name::<$type>(), $optional, $default)
     };
 }
 
@@ -156,29 +98,29 @@ macro_rules! command {
 
 #[cfg(test)]
 mod tests {
-    use super::{Arg, StringArg, UintArg, IntArg, FloatArg, Command};
+    use super::{Arg, Command};
 
     #[test]
     fn macro_test() {
         let cmd = command!{
             name: "test".to_owned(),
             args: [
-                ["stringarg", StringArg, true, None],
-                ["uintarg", UintArg, false, Some(1_u64)],
-                ["intarg", IntArg, false, Some(1_i64)],
-                ["floatarg", FloatArg, false, Some(1_f64)],
+                ["stringarg", String, true, None],
+                ["uintarg", u64, false, Some(Box::new(1_u64))],
+                ["intarg", i64, false, Some(Box::new(1_i64))],
+                ["floatarg", f64, false, Some(Box::new(1_f64))],
             ],
         };
 
         let mut exp = Command::new("test".to_owned());
-        let arg1 = StringArg::new("stringarg".to_owned(), true, None);
-        let arg2 = UintArg::new("uintarg".to_owned(), false, Some(1_u64));
-        let arg3 = IntArg::new("intarg".to_owned(), false, Some(1_i64));
-        let arg4 = FloatArg::new("floatarg".to_owned(), false, Some(1_f64));
-        exp.add_arg(Arg::StringArg(arg1));
-        exp.add_arg(Arg::UintArg(arg2));
-        exp.add_arg(Arg::IntArg(arg3));
-        exp.add_arg(Arg::FloatArg(arg4));
+        let arg1 = Arg::new("stringarg".to_owned(), std::any::type_name::<String>(), true, None);
+        let arg2 = Arg::new("uintarg".to_owned(), std::any::type_name::<u64>(), false, Some(Box::new(1_u64)));
+        let arg3 = Arg::new("intarg".to_owned(), std::any::type_name::<i64>(), false,Some(Box::new(1_i64)));
+        let arg4 = Arg::new("floatarg".to_owned(), std::any::type_name::<f64>(), false,Some(Box::new(1_f64)));
+        exp.add_arg(arg1);
+        exp.add_arg(arg2);
+        exp.add_arg(arg3);
+        exp.add_arg(arg4);
 
         assert_eq!(cmd, exp);
     }
@@ -188,10 +130,10 @@ mod tests {
         let mut cmd = command!{
             name: "test".to_owned(),
             args: [
-                ["stringarg", StringArg, true, None],
-                ["uintarg", UintArg, false, Some(1_u64)],
-                ["intarg", IntArg, false, Some(1_i64)],
-                ["floatarg", FloatArg, false, Some(1_f64)],
+                ["stringarg", String, true, None],
+                ["uintarg", u64, false, Some(Box::new(1_u64))],
+                ["intarg", i64, false, Some(Box::new(1_i64))],
+                ["floatarg", f64, false, Some(Box::new(1_f64))],
             ],
         };
 
