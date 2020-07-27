@@ -6,3 +6,10 @@ edition = "2018"
 
 [lib]
 crate-type=["lib"]
+
+[dependencies]
+redis-module = "0.10.0"
+
+[dev-dependencies]
+redis-module = { version = "0.10.0", features = ["test"] }
+
