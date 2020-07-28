@@ -3,6 +3,11 @@ name = "redismodule_cmd"
 version = "0.0.1"
 authors = ["Zhao Lang <eltoshan@gmail.com>"]
 edition = "2018"
+description = "A command parser for redis modules"
+license = "Apache-2.0"
+repository = "https://github.com/zhao-lang/redismodule-cmd"
+exclude = [".gitignore", ".github/**""]
+readme = "README.md"
 
 [[example]]
 name = "hello"
