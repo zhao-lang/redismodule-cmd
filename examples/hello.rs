@@ -5,17 +5,23 @@ extern crate redis_module;
 extern crate redismodule_cmd;
 
 use redis_module::{Context, RedisError, RedisResult};
+use redismodule_cmd::Command;
 
-fn hello_foo(_: &Context, args: Vec<String>) -> RedisResult {
-    let cmd = command!{
+thread_local! {
+    static CMD: Command = command!{
         name: "hello.foo",
         args: [
             ["n", u64, None],
         ],
     };
+}
 
-    let mut parsed = cmd.parse_args(args)?;
-    let n = parsed.remove("n").unwrap().as_u64().unwrap();
+fn hello_foo(_: &Context, args: Vec<String>) -> RedisResult {
+    let parsed = CMD.with(|cmd| {
+        cmd.parse_args(args)
+    });
+
+    let n = parsed?.remove("n").unwrap().as_u64().unwrap();
 
     let response = vec!["foo"; n as usize];
 
