@@ -28,7 +28,7 @@ impl Command {
         self.args.insert(arg.arg, arg);
     }
 
-    pub fn parse_args(&mut self, raw_args: Vec<String>) -> Result<HashMap<&'static str, Box<dyn Value>>, RedisError> {
+    pub fn parse_args(&self, raw_args: Vec<String>) -> Result<HashMap<&'static str, Box<dyn Value>>, RedisError> {
         let mut raw_args = raw_args.into_iter();
         match raw_args.next() {
            Some(cmd_name) => {
@@ -72,7 +72,6 @@ impl Command {
                 return Err(RedisError::String(format!("Unexpected arg {}", next_arg)))
             }
         }
-        raw_args.done()?;
 
         // check if all args are fulfilled
         for (k, v) in self.args.iter() {
@@ -173,12 +172,12 @@ macro_rules! command {
             $($arg:tt),* $(,)*
         ] $(,)*
     ) => {{
-        let mut cmd = $crate::Command::new($name);
+        let mut _cmd = $crate::Command::new($name);
         $(
             let arg = argument!($arg);
-            cmd.add_arg(arg);
+            _cmd.add_arg(arg);
         )*
-        cmd
+        _cmd
     }};
 }
 
@@ -213,7 +212,7 @@ mod tests {
 
     #[test]
     fn parse_args_test() {
-        let mut cmd = command!{
+        let cmd = command!{
             name: "test",
             args: [
                 ["stringarg", String, Some(Box::new("foo".to_owned()))],
