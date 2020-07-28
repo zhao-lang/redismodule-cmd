@@ -95,10 +95,42 @@ impl Command {
 #[clonable]
 pub trait Value: Any + Debug + Clone {
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+    fn as_string(self: Box<Self>) -> Result<String, Box<dyn Any>>;
+    fn as_u64(self: Box<Self>) -> Result<u64, Box<dyn Any>>;
+    fn as_i64(self: Box<Self>) -> Result<i64, Box<dyn Any>>;
+    fn as_f64(self: Box<Self>) -> Result<f64, Box<dyn Any>>;
 }
 
 impl<T: Any + Debug + Clone > Value for T {
     fn into_any(self: Box<Self>) -> Box<dyn Any> { self }
+
+    fn as_string(self: Box<Self>) -> Result<String, Box<dyn Any>> {
+        match self.into_any().downcast::<String>() {
+            Ok(d) => Ok(*d),
+            Err(e) => Err(e)
+        }
+    }
+
+    fn as_u64(self: Box<Self>) -> Result<u64, Box<dyn Any>> {
+        match self.into_any().downcast::<u64>() {
+            Ok(d) => Ok(*d),
+            Err(e) => Err(e)
+        }
+    }
+
+    fn as_i64(self: Box<Self>) -> Result<i64, Box<dyn Any>> {
+        match self.into_any().downcast::<i64>() {
+            Ok(d) => Ok(*d),
+            Err(e) => Err(e)
+        }
+    }
+
+    fn as_f64(self: Box<Self>) -> Result<f64, Box<dyn Any>> {
+        match self.into_any().downcast::<f64>() {
+            Ok(d) => Ok(*d),
+            Err(e) => Err(e)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -153,7 +185,6 @@ macro_rules! command {
 #[cfg(test)]
 mod tests {
     use super::{Arg, Command};
-    use std::any::Any;
 
     #[test]
     fn macro_test() {
@@ -210,24 +241,20 @@ mod tests {
         assert_eq!(parsed.is_err(), false);
         
         let parsed = parsed.unwrap();
-        let stringarg: Box<dyn Any> = parsed.get("stringarg").unwrap().clone().into_any();
-        let uintarg: Box<dyn Any> = parsed.get("uintarg").unwrap().clone().into_any();
-        let intarg: Box<dyn Any> = parsed.get("intarg").unwrap().clone().into_any();
-        let floatarg: Box<dyn Any> = parsed.get("floatarg").unwrap().clone().into_any();
         assert_eq!(
-            *stringarg.downcast::<String>().unwrap(),
+            parsed.get("stringarg").unwrap().clone().as_string().unwrap(),
             "bar".to_owned()
         );
         assert_eq!(
-            *uintarg.downcast::<u64>().unwrap(),
+            parsed.get("uintarg").unwrap().clone().as_u64().unwrap(),
             1_u64
         );
         assert_eq!(
-            *intarg.downcast::<i64>().unwrap(),
+            parsed.get("intarg").unwrap().clone().as_i64().unwrap(),
             2_i64
         );
         assert_eq!(
-            *floatarg.downcast::<f64>().unwrap(),
+            parsed.get("floatarg").unwrap().clone().as_f64().unwrap(),
             3.14
         );
     }
