@@ -14,7 +14,7 @@ pub struct Command {
     pub name: &'static str,
     required_args: Vec<Arg>,
     optional_args: Vec<Arg>,
-    named_args: HashMap<&'static str, Arg>,
+    kwargs: HashMap<&'static str, Arg>,
 }
 
 thread_local! {
@@ -30,68 +30,74 @@ macro_rules! parse_arg {
         $next_arg:ident,
         $raw_args:ident
     ) => {
-        if $arg.is_vec {
-            let len = parse_unsigned_integer($next_arg.as_str())? as usize;
-            let mut val: Vec<Box<dyn Value>> = Vec::with_capacity(len);
-            for _ in 0..len {
-                match $raw_args.next() {
-                    Some(next) => {
-                        $next_arg = next;
-                    },
-                    None => {
-                        return Err(RedisError::WrongArity);
-                    }
-                };
+        match $arg.kind {
+            Collection::Unit => {
                 match $arg.type_name {
                     n if n == TN_STRING.with(|t| t.clone()) => {
-                        val.push(Box::new($next_arg.clone()));
+                        Box::new($next_arg.clone())
                     },
                     n if n == TN_U64.with(|t| t.clone()) => {
-                        val.push(Box::new(parse_unsigned_integer($next_arg.as_str())?));
+                        Box::new(parse_unsigned_integer($next_arg.as_str())?)
                     },
                     n if n == TN_I64.with(|t| t.clone()) => {
-                        val.push(Box::new(parse_integer($next_arg.as_str())?));
+                        Box::new(parse_integer($next_arg.as_str())?)
                     },
                     n if n == TN_F64.with(|t| t.clone()) => {
-                        val.push(Box::new(parse_float($next_arg.as_str())?));
+                        Box::new(parse_float($next_arg.as_str())?)
                     },
                     _ => return Err(RedisError::String(format!("{} is not a supported type", $arg.type_name)))
                 }
-            }
-            Box::new(val)
-        } else {
-            match $arg.type_name {
-                n if n == TN_STRING.with(|t| t.clone()) => {
-                    Box::new($next_arg.clone())
-                },
-                n if n == TN_U64.with(|t| t.clone()) => {
-                    Box::new(parse_unsigned_integer($next_arg.as_str())?)
-                },
-                n if n == TN_I64.with(|t| t.clone()) => {
-                    Box::new(parse_integer($next_arg.as_str())?)
-                },
-                n if n == TN_F64.with(|t| t.clone()) => {
-                    Box::new(parse_float($next_arg.as_str())?)
-                },
-                _ => return Err(RedisError::String(format!("{} is not a supported type", $arg.type_name)))
-            }
+            },
+            Collection::Vec => {
+                let len = parse_unsigned_integer($next_arg.as_str())? as usize;
+                let mut val: Vec<Box<dyn Value>> = Vec::with_capacity(len);
+                for _ in 0..len {
+                    match $raw_args.next() {
+                        Some(next) => {
+                            $next_arg = next;
+                        },
+                        None => {
+                            return Err(RedisError::WrongArity);
+                        }
+                    };
+                    match $arg.type_name {
+                        n if n == TN_STRING.with(|t| t.clone()) => {
+                            val.push(Box::new($next_arg.clone()));
+                        },
+                        n if n == TN_U64.with(|t| t.clone()) => {
+                            val.push(Box::new(parse_unsigned_integer($next_arg.as_str())?));
+                        },
+                        n if n == TN_I64.with(|t| t.clone()) => {
+                            val.push(Box::new(parse_integer($next_arg.as_str())?));
+                        },
+                        n if n == TN_F64.with(|t| t.clone()) => {
+                            val.push(Box::new(parse_float($next_arg.as_str())?));
+                        },
+                        _ => return Err(RedisError::String(format!("{} is not a supported type", $arg.type_name)))
+                    }
+                }
+                Box::new(val)
+            },
         }
     };
 }
 
 impl Command {
     pub fn new(name: &'static str) -> Self{
-        Command {name, required_args: Vec::new(), optional_args: Vec::new(), named_args: HashMap::new()}
+        Command {name, required_args: Vec::new(), optional_args: Vec::new(), kwargs: HashMap::new()}
     }
 
     pub fn add_arg(&mut self, arg: Arg) {
-        if arg.kwarg {
-            self.named_args.insert(arg.arg, arg);
-        } else {
-            if arg.default.is_none() {
-                self.required_args.push(arg);
-            } else {
-                self.optional_args.push(arg);
+        match arg.arg_type {
+            ArgType::Arg => {
+                if arg.default.is_none() {
+                    self.required_args.push(arg);
+                } else {
+                    self.optional_args.push(arg);
+                }
+            },
+            ArgType::Kwarg => {
+                self.kwargs.insert(arg.arg, arg);
             }
         }
     }
@@ -125,7 +131,7 @@ impl Command {
                 continue;
             }
             
-            if let Some(arg) = self.named_args.get(next_arg.to_lowercase().as_str()) {
+            if let Some(arg) = self.kwargs.get(next_arg.to_lowercase().as_str()) {
                 // if we can match named args, then done with optional
                 if do_optional {
                     do_optional = false;
@@ -166,7 +172,7 @@ impl Command {
         }
 
         // check if all kwargs are fulfilled
-        for (k, v) in self.named_args.iter() {
+        for (k, v) in self.kwargs.iter() {
             if !res.contains_key(k) {
                 if v.default.is_none() {
                     return Err(RedisError::String(format!("{} is required", v.arg)))
@@ -272,27 +278,40 @@ impl<T: Any + Debug + Clone > Value for T {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum ArgType {
+    Arg,
+    Kwarg,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Collection {
+    Unit,
+    Vec,
+}
+
 #[derive(Debug)]
 pub struct Arg {
     pub arg: &'static str,
+    pub arg_type: ArgType,
     pub type_name: &'static str,
-    pub is_vec: bool,
+    pub kind: Collection,
     pub default: Option<Box<dyn Value>>,
-    pub kwarg: bool,
 }
 
 impl Arg {
-    pub fn new(arg: &'static str, type_name: &'static str, is_vec: bool, default: Option<Box<dyn Value>>, kwarg: bool) -> Self {
-        Arg {arg, type_name, is_vec, default, kwarg}
+    pub fn new(arg: &'static str, arg_type: ArgType, type_name: &'static str, kind: Collection, default: Option<Box<dyn Value>>) -> Self {
+        Arg {arg, arg_type, type_name, kind, default}
     }
 }
 
 impl std::cmp::PartialEq for Arg {
     fn eq(&self, other: &Self) -> bool {
         self.arg == other.arg &&
+        self.arg_type == other.arg_type &&
         self.type_name == other.type_name &&
-        self.default.is_none() == other.default.is_none() &&
-        self.kwarg == other.kwarg
+        self.kind == other.kind &&
+        self.default.is_none() == other.default.is_none()
     }
 }
 
@@ -300,12 +319,12 @@ impl std::cmp::PartialEq for Arg {
 macro_rules! argument {
     ([
         $arg:expr,
+        $argtype:expr,
         $type:ty,
-        $len:literal,
-        $default:expr,
-        $unnamed:expr
+        $kind:expr,
+        $default:expr
     ]) => {
-        $crate::Arg::new($arg, std::any::type_name::<$type>(), $len, $default, $unnamed)
+        $crate::Arg::new($arg, $argtype, std::any::type_name::<$type>(), $kind, $default)
     };
 }
 
@@ -328,7 +347,7 @@ macro_rules! command {
 
 #[cfg(test)]
 mod tests {
-    use super::{Arg, Command};
+    use super::{Arg, Command, ArgType, Collection};
     
     extern crate redis_module;
 
@@ -337,18 +356,18 @@ mod tests {
         let cmd = command!{
             name: "test",
             args: [
-                ["stringarg", String, false, None, false],
-                ["uintarg", u64, false, Some(Box::new(1_u64)), true],
-                ["intarg", i64, false, Some(Box::new(1_i64)), true],
-                ["floatarg", f64, false, Some(Box::new(1_f64)), true],
+                ["stringarg", ArgType::Arg, String, Collection::Unit, None],
+                ["uintarg", ArgType::Kwarg, u64, Collection::Unit, Some(Box::new(1_u64))],
+                ["intarg", ArgType::Kwarg, i64, Collection::Unit, Some(Box::new(1_i64))],
+                ["floatarg", ArgType::Kwarg, f64, Collection::Unit, Some(Box::new(1_f64))],
             ],
         };
 
         let mut exp = Command::new("test");
-        let arg1 = Arg::new("stringarg", std::any::type_name::<String>(), false, None, false);
-        let arg2 = Arg::new("uintarg", std::any::type_name::<u64>(), false, Some(Box::new(1_u64)), true);
-        let arg3 = Arg::new("intarg", std::any::type_name::<i64>(), false, Some(Box::new(1_i64)), true);
-        let arg4 = Arg::new("floatarg", std::any::type_name::<f64>(), false, Some(Box::new(1_f64)), true);
+        let arg1 = Arg::new("stringarg", ArgType::Arg, std::any::type_name::<String>(), Collection::Unit, None);
+        let arg2 = Arg::new("uintarg", ArgType::Kwarg, std::any::type_name::<u64>(), Collection::Unit, Some(Box::new(1_u64)));
+        let arg3 = Arg::new("intarg", ArgType::Kwarg, std::any::type_name::<i64>(), Collection::Unit, Some(Box::new(1_i64)));
+        let arg4 = Arg::new("floatarg", ArgType::Kwarg, std::any::type_name::<f64>(), Collection::Unit, Some(Box::new(1_f64)));
         exp.add_arg(arg1);
         exp.add_arg(arg2);
         exp.add_arg(arg3);
@@ -362,11 +381,11 @@ mod tests {
         let cmd = command!{
             name: "test",
             args: [
-                ["required", String, false, None, false],
-                ["optional", String, false, Some(Box::new("foo".to_owned())), false],
-                ["uintarg", u64, false, Some(Box::new(1_u64)), true],
-                ["intarg", i64, false, None, true],
-                ["floatarg", f64, false, None, true],
+                ["required", ArgType::Arg, String, Collection::Unit, None],
+                ["optional", ArgType::Arg, String, Collection::Unit, Some(Box::new("foo".to_owned()))],
+                ["uintarg", ArgType::Kwarg, u64, Collection::Unit, Some(Box::new(1_u64))],
+                ["intarg", ArgType::Kwarg, i64, Collection::Unit, None],
+                ["floatarg", ArgType::Kwarg, f64, Collection::Unit, None],
             ],
         };
 
@@ -414,10 +433,10 @@ mod tests {
         let cmd = command!{
             name: "test",
             args: [
-                ["foo", String, false, None, false],
-                ["vec1", u64, true, None, false],
-                ["vec2", i64, true, None, true],
-                ["fizz", String, false, None, true],
+                ["foo", ArgType::Arg, String, Collection::Unit, None],
+                ["vec1", ArgType::Arg, u64, Collection::Vec, None],
+                ["vec2", ArgType::Kwarg, i64, Collection::Vec, None],
+                ["fizz", ArgType::Kwarg, String, Collection::Unit, None],
             ],
         };
 

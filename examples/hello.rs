@@ -5,16 +5,16 @@ extern crate redis_module;
 extern crate redismodule_cmd;
 
 use redis_module::{Context, RedisError, RedisValue, RedisResult};
-use redismodule_cmd::Command;
+use redismodule_cmd::{Command, ArgType, Collection};
 
 thread_local! {
     static CMD: Command = command!{
         name: "hello.foo",
         args: [
-            ["input", String, false, None, false],
-            ["optional", String, false, Some(Box::new("baz".to_owned())), false],
-            ["n", u64, false, Some(Box::new(1_u64)), true],
-            ["vec1", i64, true, None, true],
+            ["input", ArgType::Arg, String, Collection::Unit, None],
+            ["optional", ArgType::Arg, String, Collection::Unit, Some(Box::new("baz".to_owned()))],
+            ["n", ArgType::Kwarg, u64, Collection::Unit, Some(Box::new(1_u64))],
+            ["vec1", ArgType::Kwarg, i64, Collection::Vec, None],
         ],
     };
 }
