@@ -145,40 +145,40 @@ impl Command {
 #[clonable]
 pub trait Value: Any + Debug + Clone {
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
-    fn as_string(self: Box<Self>) -> Result<String, Box<dyn Any>>;
-    fn as_u64(self: Box<Self>) -> Result<u64, Box<dyn Any>>;
-    fn as_i64(self: Box<Self>) -> Result<i64, Box<dyn Any>>;
-    fn as_f64(self: Box<Self>) -> Result<f64, Box<dyn Any>>;
+    fn as_string(self: Box<Self>) -> Result<String, RedisError>;
+    fn as_u64(self: Box<Self>) -> Result<u64, RedisError>;
+    fn as_i64(self: Box<Self>) -> Result<i64, RedisError>;
+    fn as_f64(self: Box<Self>) -> Result<f64, RedisError>;
 }
 
 impl<T: Any + Debug + Clone > Value for T {
     fn into_any(self: Box<Self>) -> Box<dyn Any> { self }
 
-    fn as_string(self: Box<Self>) -> Result<String, Box<dyn Any>> {
+    fn as_string(self: Box<Self>) -> Result<String, RedisError> {
         match self.into_any().downcast::<String>() {
             Ok(d) => Ok(*d),
-            Err(e) => Err(e)
+            Err(e) => Err(RedisError::String(format!("Unable to cast {:?} into String", e)))
         }
     }
 
-    fn as_u64(self: Box<Self>) -> Result<u64, Box<dyn Any>> {
+    fn as_u64(self: Box<Self>) -> Result<u64, RedisError> {
         match self.into_any().downcast::<u64>() {
             Ok(d) => Ok(*d),
-            Err(e) => Err(e)
+            Err(e) => Err(RedisError::String(format!("Unable to cast {:?} into u64", e)))
         }
     }
 
-    fn as_i64(self: Box<Self>) -> Result<i64, Box<dyn Any>> {
+    fn as_i64(self: Box<Self>) -> Result<i64, RedisError> {
         match self.into_any().downcast::<i64>() {
             Ok(d) => Ok(*d),
-            Err(e) => Err(e)
+            Err(e) => Err(RedisError::String(format!("Unable to cast {:?} into i64", e)))
         }
     }
 
-    fn as_f64(self: Box<Self>) -> Result<f64, Box<dyn Any>> {
+    fn as_f64(self: Box<Self>) -> Result<f64, RedisError> {
         match self.into_any().downcast::<f64>() {
             Ok(d) => Ok(*d),
-            Err(e) => Err(e)
+            Err(e) => Err(RedisError::String(format!("Unable to cast {:?} into f64", e)))
         }
     }
 }

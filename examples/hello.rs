@@ -23,9 +23,9 @@ fn hello_foo(_: &Context, args: Vec<String>) -> RedisResult {
         cmd.parse_args(args)
     })?;
 
-    let input = parsed.remove("input").unwrap().as_string().unwrap();
-    let opt = parsed.remove("optional").unwrap().as_string().unwrap();
-    let n = parsed.remove("n").unwrap().as_u64().unwrap();
+    let input = parsed.remove("input").unwrap().as_string()?;
+    let opt = parsed.remove("optional").unwrap().as_string()?;
+    let n = parsed.remove("n").unwrap().as_u64()?;
 
     let mut response = vec![input; n as usize];
     response.push(opt);
