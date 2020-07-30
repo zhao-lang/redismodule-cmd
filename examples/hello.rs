@@ -4,16 +4,17 @@ extern crate redis_module;
 #[macro_use]
 extern crate redismodule_cmd;
 
-use redis_module::{Context, RedisError, RedisResult};
+use redis_module::{Context, RedisError, RedisValue, RedisResult};
 use redismodule_cmd::Command;
 
 thread_local! {
     static CMD: Command = command!{
         name: "hello.foo",
         args: [
-            ["input", String, None, false],
-            ["optional", String, Some(Box::new("baz".to_owned())), false],
-            ["n", u64, Some(Box::new(1_u64)), true],
+            ["input", String, 1, None, false],
+            ["optional", String, 1, Some(Box::new("baz".to_owned())), false],
+            ["n", u64, 1, Some(Box::new(1_u64)), true],
+            ["vec1", i64, 3, None, true],
         ],
     };
 }
@@ -26,9 +27,14 @@ fn hello_foo(_: &Context, args: Vec<String>) -> RedisResult {
     let input = parsed.remove("input").unwrap().as_string()?;
     let opt = parsed.remove("optional").unwrap().as_string()?;
     let n = parsed.remove("n").unwrap().as_u64()?;
+    let vec1 = parsed.remove("vec1").unwrap().as_i64vec()?;
 
-    let mut response = vec![input; n as usize];
-    response.push(opt);
+    let mut response: Vec<RedisValue> = Vec::new();
+    for _ in 0..n {
+        response.push(input.clone().into());
+    }
+    response.push(opt.into());
+    response.push(vec1.iter().sum::<i64>().into());
 
     return Ok(response.into());
 }
@@ -60,18 +66,17 @@ mod tests {
 
     #[test]
     fn hello_foo_valid_args() {
-        let result = run_hello_foo(&vec!["hello.foo", "bar", "n", "2"]);
+        let result = run_hello_foo(&vec!["hello.foo", "bar", "n", "2", "vec1", "1", "1", "1"]);
 
         match result {
             Ok(RedisValue::Array(v)) => {
-                let exp = vec!["bar".to_owned(), "bar".to_owned(), "baz".to_owned()];
-                assert_eq!(
-                    v,
-                    exp
-                        .into_iter()
-                        .map(RedisValue::BulkString)
-                        .collect::<Vec<_>>()
-                );
+                let exp = vec![
+                    RedisValue::BulkString("bar".to_owned()),
+                    RedisValue::BulkString("bar".to_owned()),
+                    RedisValue::BulkString("baz".to_owned()),
+                    RedisValue::Integer(3)
+                ];
+                assert_eq!(v, exp);
             }
             _ => assert!(false, "Bad result: {:?}", result),
         }

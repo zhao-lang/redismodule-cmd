@@ -1,4 +1,5 @@
 extern crate redis_module;
+extern crate itertools;
 
 use std::any::{Any, type_name};
 use std::collections::HashMap;
@@ -6,6 +7,7 @@ use std::fmt::Debug;
 
 use dyn_clonable::*;
 use redis_module::{RedisError, parse_unsigned_integer, parse_integer, parse_float};
+use itertools::Itertools;
 
 #[derive(Debug, PartialEq)]
 pub struct Command {
@@ -25,22 +27,56 @@ thread_local! {
 macro_rules! parse_arg {
     (
         $arg:ident,
-        $next_arg:ident
+        $next_arg:ident,
+        $raw_args:ident
     ) => {
-        match $arg.type_name {
-            n if n == TN_STRING.with(|t| t.clone()) => {
-                Box::new($next_arg.clone())
-            },
-            n if n == TN_U64.with(|t| t.clone()) => {
-                Box::new(parse_unsigned_integer($next_arg.as_str())?)
-            },
-            n if n == TN_I64.with(|t| t.clone()) => {
-                Box::new(parse_integer($next_arg.as_str())?)
-            },
-            n if n == TN_F64.with(|t| t.clone()) => {
-                Box::new(parse_float($next_arg.as_str())?)
-            },
-            _ => return Err(RedisError::String(format!("{} is not a supported type", $arg.type_name)))
+        if $arg.len > 1 {
+            let mut val: Vec<Box<dyn Value>> = Vec::new();
+            for n in 0..$arg.len {
+                match $arg.type_name {
+                    n if n == TN_STRING.with(|t| t.clone()) => {
+                        val.push(Box::new($next_arg.clone()));
+                    },
+                    n if n == TN_U64.with(|t| t.clone()) => {
+                        val.push(Box::new(parse_unsigned_integer($next_arg.as_str())?));
+                    },
+                    n if n == TN_I64.with(|t| t.clone()) => {
+                        val.push(Box::new(parse_integer($next_arg.as_str())?));
+                    },
+                    n if n == TN_F64.with(|t| t.clone()) => {
+                        val.push(Box::new(parse_float($next_arg.as_str())?));
+                    },
+                    _ => return Err(RedisError::String(format!("{} is not a supported type", $arg.type_name)))
+                }
+                if n < $arg.len-1 {
+                    match $raw_args.next() {
+                        Some(next) => {
+                            $next_arg = next;
+                        },
+                        None => {
+                            return Err(RedisError::WrongArity);
+                        }
+                    };
+                }
+                
+            }
+            Box::new(val)
+        } else {
+            match $arg.type_name {
+                n if n == TN_STRING.with(|t| t.clone()) => {
+                    Box::new($next_arg.clone())
+                },
+                n if n == TN_U64.with(|t| t.clone()) => {
+                    Box::new(parse_unsigned_integer($next_arg.as_str())?)
+                },
+                n if n == TN_I64.with(|t| t.clone()) => {
+                    Box::new(parse_integer($next_arg.as_str())?)
+                },
+                n if n == TN_F64.with(|t| t.clone()) => {
+                    Box::new(parse_float($next_arg.as_str())?)
+                },
+                _ => return Err(RedisError::String(format!("{} is not a supported type", $arg.type_name)))
+            }
         }
     };
 }
@@ -79,13 +115,15 @@ impl Command {
         let mut required_pos: usize = 0;
         let mut optional_pos: usize = 0;
         let mut do_optional = true;
-        while let Some(next_arg) = raw_args.next() {
+        while let Some(mut next_arg) = raw_args.next() {
             // match required args
             if required_pos < self.required_args.len() {
                 let arg = &self.required_args[required_pos];
-                let val: Box<dyn Value> = parse_arg!(arg, next_arg);
+
+                let val: Box<dyn Value> = parse_arg!(arg, next_arg, raw_args);
                 res.insert(arg.arg, val);
                 required_pos += 1;
+                
                 continue;
             }
             
@@ -96,7 +134,7 @@ impl Command {
                 }
 
                 let val: Box<dyn Value> = match raw_args.next() {
-                    Some(next) => parse_arg!(arg, next),
+                    Some(mut next) => parse_arg!(arg, next, raw_args),
                     None => return Err(RedisError::WrongArity)
                 };
                 
@@ -105,7 +143,8 @@ impl Command {
                 // match optional args
                 if do_optional && optional_pos < self.optional_args.len() {
                     let arg = &self.optional_args[optional_pos];
-                    let val: Box<dyn Value> = parse_arg!(arg, next_arg);
+
+                    let val: Box<dyn Value> = parse_arg!(arg, next_arg, raw_args);
                     res.insert(arg.arg, val);
                     optional_pos += 1;
                 } else {
@@ -149,6 +188,11 @@ pub trait Value: Any + Debug + Clone {
     fn as_u64(self: Box<Self>) -> Result<u64, RedisError>;
     fn as_i64(self: Box<Self>) -> Result<i64, RedisError>;
     fn as_f64(self: Box<Self>) -> Result<f64, RedisError>;
+    fn as_vec(self: Box<Self>) -> Result<Vec<Box<dyn Value>>, RedisError>;
+    fn as_stringvec(self: Box<Self>) -> Result<Vec<String>, RedisError>;
+    fn as_u64vec(self: Box<Self>) -> Result<Vec<u64>, RedisError>;
+    fn as_i64vec(self: Box<Self>) -> Result<Vec<i64>, RedisError>;
+    fn as_f64vec(self: Box<Self>) -> Result<Vec<f64>, RedisError>;
 }
 
 impl<T: Any + Debug + Clone > Value for T {
@@ -181,19 +225,67 @@ impl<T: Any + Debug + Clone > Value for T {
             Err(e) => Err(RedisError::String(format!("Unable to cast {:?} into f64", e)))
         }
     }
+
+    fn as_vec(self: Box<Self>) -> Result<Vec<Box<dyn Value>>, RedisError> {
+        match self.into_any().downcast::<Vec<Box<dyn Value>>>() {
+            Ok(d) => Ok(*d),
+            Err(e) => Err(RedisError::String(format!("Unable to cast {:?} into String vec", e)))
+        }
+    }
+
+    fn as_stringvec(self: Box<Self>) -> Result<Vec<String>, RedisError> {
+        self.as_vec()?
+            .into_iter()
+            .map(|x| x.as_string())
+            .fold_results(Vec::new(), |mut a, b| {
+                a.push(b);
+                a
+            })
+    }
+
+    fn as_u64vec(self: Box<Self>) -> Result<Vec<u64>, RedisError> {
+        self.as_vec()?
+            .into_iter()
+            .map(|x| x.as_u64())
+            .fold_results(Vec::new(), |mut a, b| {
+                a.push(b);
+                a
+            })
+    }
+
+    fn as_i64vec(self: Box<Self>) -> Result<Vec<i64>, RedisError> {
+        self.as_vec()?
+            .into_iter()
+            .map(|x| x.as_i64())
+            .fold_results(Vec::new(), |mut a, b| {
+                a.push(b);
+                a
+            })
+    }
+
+    fn as_f64vec(self: Box<Self>) -> Result<Vec<f64>, RedisError> {
+        self.as_vec()?
+            .into_iter()
+            .map(|x| x.as_f64())
+            .fold_results(Vec::new(), |mut a, b| {
+                a.push(b);
+                a
+            })
+    }
 }
 
 #[derive(Debug)]
 pub struct Arg {
     pub arg: &'static str,
     pub type_name: &'static str,
+    pub len: usize,
     pub default: Option<Box<dyn Value>>,
     pub kwarg: bool,
 }
 
 impl Arg {
-    pub fn new(arg: &'static str, type_name: &'static str, default: Option<Box<dyn Value>>, kwarg: bool) -> Self {
-        Arg {arg, type_name, default, kwarg}
+    pub fn new(arg: &'static str, type_name: &'static str, len: usize, default: Option<Box<dyn Value>>, kwarg: bool) -> Self {
+        Arg {arg, type_name, len, default, kwarg}
     }
 }
 
@@ -211,10 +303,11 @@ macro_rules! argument {
     ([
         $arg:expr,
         $type:ty,
+        $len:literal,
         $default:expr,
         $unnamed:expr
     ]) => {
-        $crate::Arg::new($arg, std::any::type_name::<$type>(), $default, $unnamed)
+        $crate::Arg::new($arg, std::any::type_name::<$type>(), $len, $default, $unnamed)
     };
 }
 
@@ -238,24 +331,26 @@ macro_rules! command {
 #[cfg(test)]
 mod tests {
     use super::{Arg, Command};
+    
+    extern crate redis_module;
 
     #[test]
     fn macro_test() {
         let cmd = command!{
             name: "test",
             args: [
-                ["stringarg", String, None, false],
-                ["uintarg", u64, Some(Box::new(1_u64)), true],
-                ["intarg", i64, Some(Box::new(1_i64)), true],
-                ["floatarg", f64, Some(Box::new(1_f64)), true],
+                ["stringarg", String, 1, None, false],
+                ["uintarg", u64, 1, Some(Box::new(1_u64)), true],
+                ["intarg", i64, 1, Some(Box::new(1_i64)), true],
+                ["floatarg", f64, 1, Some(Box::new(1_f64)), true],
             ],
         };
 
         let mut exp = Command::new("test");
-        let arg1 = Arg::new("stringarg", std::any::type_name::<String>(), None, false);
-        let arg2 = Arg::new("uintarg", std::any::type_name::<u64>(), Some(Box::new(1_u64)), true);
-        let arg3 = Arg::new("intarg", std::any::type_name::<i64>(), Some(Box::new(1_i64)), true);
-        let arg4 = Arg::new("floatarg", std::any::type_name::<f64>(), Some(Box::new(1_f64)), true);
+        let arg1 = Arg::new("stringarg", std::any::type_name::<String>(), 1, None, false);
+        let arg2 = Arg::new("uintarg", std::any::type_name::<u64>(), 1, Some(Box::new(1_u64)), true);
+        let arg3 = Arg::new("intarg", std::any::type_name::<i64>(), 1, Some(Box::new(1_i64)), true);
+        let arg4 = Arg::new("floatarg", std::any::type_name::<f64>(), 1, Some(Box::new(1_f64)), true);
         exp.add_arg(arg1);
         exp.add_arg(arg2);
         exp.add_arg(arg3);
@@ -269,11 +364,11 @@ mod tests {
         let cmd = command!{
             name: "test",
             args: [
-                ["required", String, None, false],
-                ["optional", String, Some(Box::new("foo".to_owned())), false],
-                ["uintarg", u64, Some(Box::new(1_u64)), true],
-                ["intarg", i64, None, true],
-                ["floatarg", f64, None, true],
+                ["required", String, 1, None, false],
+                ["optional", String, 1, Some(Box::new("foo".to_owned())), false],
+                ["uintarg", u64, 1, Some(Box::new(1_u64)), true],
+                ["intarg", i64, 1, None, true],
+                ["floatarg", f64, 1, None, true],
             ],
         };
 
@@ -313,6 +408,61 @@ mod tests {
         assert_eq!(
             parsed.remove("floatarg").unwrap().as_f64().unwrap(),
             3.14
+        );
+    }
+
+    #[test]
+    fn parse_vec_args_test() {
+        let cmd = command!{
+            name: "test",
+            args: [
+                ["foo", String, 1, None, false],
+                ["vec1", u64, 2, None, false],
+                ["vec2", i64, 3, None, true],
+                ["fizz", String, 1, None, true],
+            ],
+        };
+
+        let raw_args = vec![
+            "test".to_owned(),
+            "bar".to_owned(),
+            "1".to_owned(),
+        ];
+        let parsed = cmd.parse_args(raw_args);
+        assert_eq!(parsed.is_err(), true);
+
+        let raw_args = vec![
+            "test".to_owned(),
+            "bar".to_owned(),
+            "1".to_owned(),
+            "1".to_owned(),
+            "vec2".to_owned(),
+            "2".to_owned(),
+            "2".to_owned(),
+            "2".to_owned(),
+            "fizz".to_owned(),
+            "buzz".to_owned(),
+        ];
+        let parsed = cmd.parse_args(raw_args);
+        assert_eq!(parsed.is_ok(), true);
+        assert_eq!(parsed.is_err(), false);
+        
+        let mut parsed = parsed.unwrap();
+        assert_eq!(
+            parsed.remove("foo").unwrap().as_string().unwrap(),
+            "bar".to_owned()
+        );
+        assert_eq!(
+            parsed.remove("vec1").unwrap().as_u64vec().unwrap(),
+            vec![1_u64; 2]
+        );
+        assert_eq!(
+            parsed.remove("vec2").unwrap().as_i64vec().unwrap(),
+            vec![2_i64; 3]
+        );
+        assert_eq!(
+            parsed.remove("fizz").unwrap().as_string().unwrap(),
+            "buzz".to_owned()
         );
     }
 }
