@@ -11,19 +11,24 @@ thread_local! {
     static CMD: Command = command!{
         name: "hello.foo",
         args: [
-            ["n", u64, None],
+            ["input", String, None, false],
+            ["optional", String, Some(Box::new("baz".to_owned())), false],
+            ["n", u64, Some(Box::new(1_u64)), true],
         ],
     };
 }
 
 fn hello_foo(_: &Context, args: Vec<String>) -> RedisResult {
-    let parsed = CMD.with(|cmd| {
+    let mut parsed = CMD.with(|cmd| {
         cmd.parse_args(args)
-    });
+    })?;
 
-    let n = parsed?.remove("n").unwrap().as_u64().unwrap();
+    let input = parsed.remove("input").unwrap().as_string().unwrap();
+    let opt = parsed.remove("optional").unwrap().as_string().unwrap();
+    let n = parsed.remove("n").unwrap().as_u64().unwrap();
 
-    let response = vec!["foo"; n as usize];
+    let mut response = vec![input; n as usize];
+    response.push(opt);
 
     return Ok(response.into());
 }
@@ -55,13 +60,14 @@ mod tests {
 
     #[test]
     fn hello_foo_valid_args() {
-        let result = run_hello_foo(&vec!["hello.foo", "n", "2"]);
+        let result = run_hello_foo(&vec!["hello.foo", "bar", "n", "2"]);
 
         match result {
             Ok(RedisValue::Array(v)) => {
+                let exp = vec!["bar".to_owned(), "bar".to_owned(), "baz".to_owned()];
                 assert_eq!(
                     v,
-                    vec!["foo".to_owned(); 2]
+                    exp
                         .into_iter()
                         .map(RedisValue::BulkString)
                         .collect::<Vec<_>>()
@@ -73,11 +79,11 @@ mod tests {
 
     #[test]
     fn hello_foo_invalid_args() {
-        let result = run_hello_foo(&vec!["hello.foo", "2"]);
+        let result = run_hello_foo(&vec!["hello.foo", "n", "2", "3"]);
 
         match result {
             Err(RedisError::String(s)) => {
-                assert_eq!(s, "Unexpected arg 2");
+                assert_eq!(s, "Unexpected arg 3");
             }
             _ => assert!(false, "Bad result: {:?}", result),
         }
@@ -94,7 +100,7 @@ mod tests {
             _ => assert!(false, "Bad result: {:?}", result),
         }
 
-        let result = run_hello_foo(&vec!["hello.foo", "n", "2", "bad"]);
+        let result = run_hello_foo(&vec!["hello.foo", "bar", "n", "2", "bad"]);
 
         match result {
             Err(RedisError::String(s)) => {

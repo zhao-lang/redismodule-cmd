@@ -5,34 +5,68 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use dyn_clonable::*;
-use redis_module::{RedisError, NextArg};
+use redis_module::{RedisError, parse_unsigned_integer, parse_integer, parse_float};
 
 #[derive(Debug, PartialEq)]
 pub struct Command {
     pub name: &'static str,
-    args: HashMap<&'static str, Arg>,
+    required_args: Vec<Arg>,
+    optional_args: Vec<Arg>,
+    named_args: HashMap<&'static str, Arg>,
 }
 
-// // type_name is not yet a stable const fn
-// const tn_string: &'static str = type_name::<String>();
-// const tn_u64: &'static str = type_name::<u64>();
-// const tn_i64: &'static str = type_name::<i64>();
-// const tn_f64: &'static str = type_name::<f64>();
+thread_local! {
+    static TN_STRING: &'static str = type_name::<String>();
+    static TN_U64: &'static str = type_name::<u64>();
+    static TN_I64: &'static str = type_name::<i64>();
+    static TN_F64: &'static str = type_name::<f64>();
+}
+
+macro_rules! parse_arg {
+    (
+        $arg:ident,
+        $next_arg:ident
+    ) => {
+        match $arg.type_name {
+            n if n == TN_STRING.with(|t| t.clone()) => {
+                Box::new($next_arg.clone())
+            },
+            n if n == TN_U64.with(|t| t.clone()) => {
+                Box::new(parse_unsigned_integer($next_arg.as_str())?)
+            },
+            n if n == TN_I64.with(|t| t.clone()) => {
+                Box::new(parse_integer($next_arg.as_str())?)
+            },
+            n if n == TN_F64.with(|t| t.clone()) => {
+                Box::new(parse_float($next_arg.as_str())?)
+            },
+            _ => return Err(RedisError::String(format!("{} is not a supported type", $arg.type_name)))
+        }
+    };
+}
 
 impl Command {
     pub fn new(name: &'static str) -> Self{
-        Command {name, args: HashMap::new()}
+        Command {name, required_args: Vec::new(), optional_args: Vec::new(), named_args: HashMap::new()}
     }
 
     pub fn add_arg(&mut self, arg: Arg) {
-        self.args.insert(arg.arg, arg);
+        if arg.kwarg {
+            self.named_args.insert(arg.arg, arg);
+        } else {
+            if arg.default.is_none() {
+                self.required_args.push(arg);
+            } else {
+                self.optional_args.push(arg);
+            }
+        }
     }
 
     pub fn parse_args(&self, raw_args: Vec<String>) -> Result<HashMap<&'static str, Box<dyn Value>>, RedisError> {
         let mut raw_args = raw_args.into_iter();
         match raw_args.next() {
            Some(cmd_name) => {
-               if cmd_name != self.name {
+               if cmd_name.to_lowercase() != self.name {
                    return Err(RedisError::String(format!("Expected {}, got {}", self.name, cmd_name)))
                }
            },
@@ -41,47 +75,64 @@ impl Command {
         
         let mut res = HashMap::new();
 
-        // here until type_name is a stable const fn
-        let tn_string = type_name::<String>();
-        let tn_u64 = type_name::<u64>();
-        let tn_i64 = type_name::<i64>();
-        let tn_f64 = type_name::<f64>();
-
         // parse args
+        let mut required_pos: usize = 0;
+        let mut optional_pos: usize = 0;
+        let mut do_optional = true;
         while let Some(next_arg) = raw_args.next() {
-            if let Some(arg) = self.args.get(next_arg.as_str()) {
-                // parse arg
-                let val: Box<dyn Value> = match arg.type_name {
-                    n if n == tn_string => {
-                        Box::new(raw_args.next_string()?)
-                    },
-                    n if n == tn_u64 => {
-                        Box::new(raw_args.next_u64()?)
-                    },
-                    n if n == tn_i64 => {
-                        Box::new(raw_args.next_i64()?)
-                    },
-                    n if n == tn_f64 => {
-                        Box::new(raw_args.next_f64()?)
-                    },
-                    _ => return Err(RedisError::String(format!("{} is not a supported type", arg.type_name)))
+            // match required args
+            if required_pos < self.required_args.len() {
+                let arg = &self.required_args[required_pos];
+                let val: Box<dyn Value> = parse_arg!(arg, next_arg);
+                res.insert(arg.arg, val);
+                required_pos += 1;
+                continue;
+            }
+            
+            if let Some(arg) = self.named_args.get(next_arg.to_lowercase().as_str()) {
+                // if we can match named args, then done with optional
+                if do_optional {
+                    do_optional = false;
+                }
+
+                let val: Box<dyn Value> = match raw_args.next() {
+                    Some(next) => parse_arg!(arg, next),
+                    None => return Err(RedisError::WrongArity)
                 };
                 
                 res.insert(arg.arg, val);
             } else {
-                return Err(RedisError::String(format!("Unexpected arg {}", next_arg)))
+                // match optional args
+                if do_optional && optional_pos < self.optional_args.len() {
+                    let arg = &self.optional_args[optional_pos];
+                    let val: Box<dyn Value> = parse_arg!(arg, next_arg);
+                    res.insert(arg.arg, val);
+                    optional_pos += 1;
+                } else {
+                    return Err(RedisError::String(format!("Unexpected arg {}", next_arg)))
+                }
             }
         }
 
-        // check if all args are fulfilled
-        for (k, v) in self.args.iter() {
-            if !res.contains_key(k) && v.default.is_none() {
-                return Err(RedisError::String(format!("{} is required", k)))
+        // check if all required args are fulfilled
+        for v in self.required_args.iter() {
+            if !res.contains_key(v.arg) {
+                return Err(RedisError::String(format!("{} is required", v.arg)))
             }
+        }
 
-            if !res.contains_key(k) && v.default.is_some() {
+        // check if all optional args are fulfilled
+        for v in self.optional_args.iter() {
+            if !res.contains_key(v.arg) {
+                res.insert(v.arg, v.default.as_ref().unwrap().clone());
+            }
+        }
+
+        // check if all kwargs are fulfilled
+        for (k, v) in self.named_args.iter() {
+            if !res.contains_key(k) {
                 if v.default.is_none() {
-                    return Err(RedisError::String(format!("{} is has no default value", v.arg)))
+                    return Err(RedisError::String(format!("{} is required", v.arg)))
                 }
                 res.insert(k.to_owned(), v.default.as_ref().unwrap().clone());
             }
@@ -137,11 +188,12 @@ pub struct Arg {
     pub arg: &'static str,
     pub type_name: &'static str,
     pub default: Option<Box<dyn Value>>,
+    pub kwarg: bool,
 }
 
 impl Arg {
-    pub fn new(arg: &'static str, type_name: &'static str, default: Option<Box<dyn Value>>) -> Self {
-        Arg {arg, type_name, default}
+    pub fn new(arg: &'static str, type_name: &'static str, default: Option<Box<dyn Value>>, kwarg: bool) -> Self {
+        Arg {arg, type_name, default, kwarg}
     }
 }
 
@@ -149,7 +201,8 @@ impl std::cmp::PartialEq for Arg {
     fn eq(&self, other: &Self) -> bool {
         self.arg == other.arg &&
         self.type_name == other.type_name &&
-        self.default.is_none() == other.default.is_none()
+        self.default.is_none() == other.default.is_none() &&
+        self.kwarg == other.kwarg
     }
 }
 
@@ -158,9 +211,10 @@ macro_rules! argument {
     ([
         $arg:expr,
         $type:ty,
-        $default:expr
+        $default:expr,
+        $unnamed:expr
     ]) => {
-        $crate::Arg::new($arg, std::any::type_name::<$type>(), $default)
+        $crate::Arg::new($arg, std::any::type_name::<$type>(), $default, $unnamed)
     };
 }
 
@@ -190,18 +244,18 @@ mod tests {
         let cmd = command!{
             name: "test",
             args: [
-                ["stringarg", String, None],
-                ["uintarg", u64, Some(Box::new(1_u64))],
-                ["intarg", i64, Some(Box::new(1_i64))],
-                ["floatarg", f64, Some(Box::new(1_f64))],
+                ["stringarg", String, None, false],
+                ["uintarg", u64, Some(Box::new(1_u64)), true],
+                ["intarg", i64, Some(Box::new(1_i64)), true],
+                ["floatarg", f64, Some(Box::new(1_f64)), true],
             ],
         };
 
         let mut exp = Command::new("test");
-        let arg1 = Arg::new("stringarg", std::any::type_name::<String>(), None);
-        let arg2 = Arg::new("uintarg", std::any::type_name::<u64>(), Some(Box::new(1_u64)));
-        let arg3 = Arg::new("intarg", std::any::type_name::<i64>(), Some(Box::new(1_i64)));
-        let arg4 = Arg::new("floatarg", std::any::type_name::<f64>(), Some(Box::new(1_f64)));
+        let arg1 = Arg::new("stringarg", std::any::type_name::<String>(), None, false);
+        let arg2 = Arg::new("uintarg", std::any::type_name::<u64>(), Some(Box::new(1_u64)), true);
+        let arg3 = Arg::new("intarg", std::any::type_name::<i64>(), Some(Box::new(1_i64)), true);
+        let arg4 = Arg::new("floatarg", std::any::type_name::<f64>(), Some(Box::new(1_f64)), true);
         exp.add_arg(arg1);
         exp.add_arg(arg2);
         exp.add_arg(arg3);
@@ -215,20 +269,20 @@ mod tests {
         let cmd = command!{
             name: "test",
             args: [
-                ["stringarg", String, Some(Box::new("foo".to_owned()))],
-                ["uintarg", u64, Some(Box::new(1_u64))],
-                ["intarg", i64, None],
-                ["floatarg", f64, None],
+                ["required", String, None, false],
+                ["optional", String, Some(Box::new("foo".to_owned())), false],
+                ["uintarg", u64, Some(Box::new(1_u64)), true],
+                ["intarg", i64, None, true],
+                ["floatarg", f64, None, true],
             ],
         };
 
-        let raw_args = vec!["bad".to_owned()];
+        let raw_args = vec!["test".to_owned()];
         let parsed = cmd.parse_args(raw_args);
         assert_eq!(parsed.is_err(), true);
 
         let raw_args = vec![
             "test".to_owned(),
-            "stringarg".to_owned(),
             "bar".to_owned(),
             "intarg".to_owned(),
             "2".to_owned(),
@@ -239,21 +293,25 @@ mod tests {
         assert_eq!(parsed.is_ok(), true);
         assert_eq!(parsed.is_err(), false);
         
-        let parsed = parsed.unwrap();
+        let mut parsed = parsed.unwrap();
         assert_eq!(
-            parsed.get("stringarg").unwrap().clone().as_string().unwrap(),
+            parsed.remove("required").unwrap().as_string().unwrap(),
             "bar".to_owned()
         );
         assert_eq!(
-            parsed.get("uintarg").unwrap().clone().as_u64().unwrap(),
+            parsed.remove("optional").unwrap().as_string().unwrap(),
+            "foo".to_owned()
+        );
+        assert_eq!(
+            parsed.remove("uintarg").unwrap().as_u64().unwrap(),
             1_u64
         );
         assert_eq!(
-            parsed.get("intarg").unwrap().clone().as_i64().unwrap(),
+            parsed.remove("intarg").unwrap().as_i64().unwrap(),
             2_i64
         );
         assert_eq!(
-            parsed.get("floatarg").unwrap().clone().as_f64().unwrap(),
+            parsed.remove("floatarg").unwrap().as_f64().unwrap(),
             3.14
         );
     }
