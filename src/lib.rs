@@ -30,9 +30,18 @@ macro_rules! parse_arg {
         $next_arg:ident,
         $raw_args:ident
     ) => {
-        if $arg.len > 1 {
-            let mut val: Vec<Box<dyn Value>> = Vec::new();
-            for n in 0..$arg.len {
+        if $arg.is_vec {
+            let len = parse_unsigned_integer($next_arg.as_str())? as usize;
+            let mut val: Vec<Box<dyn Value>> = Vec::with_capacity(len);
+            for _ in 0..len {
+                match $raw_args.next() {
+                    Some(next) => {
+                        $next_arg = next;
+                    },
+                    None => {
+                        return Err(RedisError::WrongArity);
+                    }
+                };
                 match $arg.type_name {
                     n if n == TN_STRING.with(|t| t.clone()) => {
                         val.push(Box::new($next_arg.clone()));
@@ -48,17 +57,6 @@ macro_rules! parse_arg {
                     },
                     _ => return Err(RedisError::String(format!("{} is not a supported type", $arg.type_name)))
                 }
-                if n < $arg.len-1 {
-                    match $raw_args.next() {
-                        Some(next) => {
-                            $next_arg = next;
-                        },
-                        None => {
-                            return Err(RedisError::WrongArity);
-                        }
-                    };
-                }
-                
             }
             Box::new(val)
         } else {
@@ -278,14 +276,14 @@ impl<T: Any + Debug + Clone > Value for T {
 pub struct Arg {
     pub arg: &'static str,
     pub type_name: &'static str,
-    pub len: usize,
+    pub is_vec: bool,
     pub default: Option<Box<dyn Value>>,
     pub kwarg: bool,
 }
 
 impl Arg {
-    pub fn new(arg: &'static str, type_name: &'static str, len: usize, default: Option<Box<dyn Value>>, kwarg: bool) -> Self {
-        Arg {arg, type_name, len, default, kwarg}
+    pub fn new(arg: &'static str, type_name: &'static str, is_vec: bool, default: Option<Box<dyn Value>>, kwarg: bool) -> Self {
+        Arg {arg, type_name, is_vec, default, kwarg}
     }
 }
 
@@ -339,18 +337,18 @@ mod tests {
         let cmd = command!{
             name: "test",
             args: [
-                ["stringarg", String, 1, None, false],
-                ["uintarg", u64, 1, Some(Box::new(1_u64)), true],
-                ["intarg", i64, 1, Some(Box::new(1_i64)), true],
-                ["floatarg", f64, 1, Some(Box::new(1_f64)), true],
+                ["stringarg", String, false, None, false],
+                ["uintarg", u64, false, Some(Box::new(1_u64)), true],
+                ["intarg", i64, false, Some(Box::new(1_i64)), true],
+                ["floatarg", f64, false, Some(Box::new(1_f64)), true],
             ],
         };
 
         let mut exp = Command::new("test");
-        let arg1 = Arg::new("stringarg", std::any::type_name::<String>(), 1, None, false);
-        let arg2 = Arg::new("uintarg", std::any::type_name::<u64>(), 1, Some(Box::new(1_u64)), true);
-        let arg3 = Arg::new("intarg", std::any::type_name::<i64>(), 1, Some(Box::new(1_i64)), true);
-        let arg4 = Arg::new("floatarg", std::any::type_name::<f64>(), 1, Some(Box::new(1_f64)), true);
+        let arg1 = Arg::new("stringarg", std::any::type_name::<String>(), false, None, false);
+        let arg2 = Arg::new("uintarg", std::any::type_name::<u64>(), false, Some(Box::new(1_u64)), true);
+        let arg3 = Arg::new("intarg", std::any::type_name::<i64>(), false, Some(Box::new(1_i64)), true);
+        let arg4 = Arg::new("floatarg", std::any::type_name::<f64>(), false, Some(Box::new(1_f64)), true);
         exp.add_arg(arg1);
         exp.add_arg(arg2);
         exp.add_arg(arg3);
@@ -364,11 +362,11 @@ mod tests {
         let cmd = command!{
             name: "test",
             args: [
-                ["required", String, 1, None, false],
-                ["optional", String, 1, Some(Box::new("foo".to_owned())), false],
-                ["uintarg", u64, 1, Some(Box::new(1_u64)), true],
-                ["intarg", i64, 1, None, true],
-                ["floatarg", f64, 1, None, true],
+                ["required", String, false, None, false],
+                ["optional", String, false, Some(Box::new("foo".to_owned())), false],
+                ["uintarg", u64, false, Some(Box::new(1_u64)), true],
+                ["intarg", i64, false, None, true],
+                ["floatarg", f64, false, None, true],
             ],
         };
 
@@ -416,10 +414,10 @@ mod tests {
         let cmd = command!{
             name: "test",
             args: [
-                ["foo", String, 1, None, false],
-                ["vec1", u64, 2, None, false],
-                ["vec2", i64, 3, None, true],
-                ["fizz", String, 1, None, true],
+                ["foo", String, false, None, false],
+                ["vec1", u64, true, None, false],
+                ["vec2", i64, true, None, true],
+                ["fizz", String, false, None, true],
             ],
         };
 
@@ -434,9 +432,11 @@ mod tests {
         let raw_args = vec![
             "test".to_owned(),
             "bar".to_owned(),
+            "2".to_owned(),
             "1".to_owned(),
             "1".to_owned(),
             "vec2".to_owned(),
+            "3".to_owned(),
             "2".to_owned(),
             "2".to_owned(),
             "2".to_owned(),

@@ -11,10 +11,10 @@ thread_local! {
     static CMD: Command = command!{
         name: "hello.foo",
         args: [
-            ["input", String, 1, None, false],
-            ["optional", String, 1, Some(Box::new("baz".to_owned())), false],
-            ["n", u64, 1, Some(Box::new(1_u64)), true],
-            ["vec1", i64, 3, None, true],
+            ["input", String, false, None, false],
+            ["optional", String, false, Some(Box::new("baz".to_owned())), false],
+            ["n", u64, false, Some(Box::new(1_u64)), true],
+            ["vec1", i64, true, None, true],
         ],
     };
 }
@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn hello_foo_valid_args() {
-        let result = run_hello_foo(&vec!["hello.foo", "bar", "n", "2", "vec1", "1", "1", "1"]);
+        let result = run_hello_foo(&vec!["hello.foo", "bar", "n", "2", "vec1", "3", "1", "1", "1"]);
 
         match result {
             Ok(RedisValue::Array(v)) => {
