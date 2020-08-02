@@ -10,11 +10,12 @@ use redismodule_cmd::{Command, ArgType, Collection};
 thread_local! {
     static CMD: Command = command!{
         name: "hello.foo",
+        desc: "hello command example",
         args: [
-            ["input", ArgType::Arg, String, Collection::Unit, None],
-            ["optional", ArgType::Arg, String, Collection::Unit, Some(Box::new("baz".to_owned()))],
-            ["n", ArgType::Kwarg, u64, Collection::Unit, Some(Box::new(1_u64))],
-            ["vec1", ArgType::Kwarg, i64, Collection::Vec, None],
+            ["input", "a string", ArgType::Arg, String, Collection::Unit, None],
+            ["optional", "another string", ArgType::Arg, String, Collection::Unit, Some(Box::new("baz".to_owned()))],
+            ["n", "some number", ArgType::Kwarg, u64, Collection::Unit, Some(Box::new(1_u64))],
+            ["vec1", "a vector of ints", ArgType::Kwarg, i64, Collection::Vec, None],
         ],
     };
 }

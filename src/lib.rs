@@ -9,13 +9,8 @@ use dyn_clonable::*;
 use redis_module::{RedisError, parse_unsigned_integer, parse_integer, parse_float};
 use itertools::Itertools;
 
-#[derive(Debug, PartialEq)]
-pub struct Command {
-    pub name: &'static str,
-    required_args: Vec<Arg>,
-    optional_args: Vec<Arg>,
-    kwargs: HashMap<&'static str, Arg>,
-}
+#[macro_use]
+mod macros;
 
 thread_local! {
     static TN_STRING: &'static str = type_name::<String>();
@@ -82,9 +77,18 @@ macro_rules! parse_arg {
     };
 }
 
+#[derive(Debug, PartialEq)]
+pub struct Command {
+    pub name: &'static str,
+    pub desc: &'static str,
+    pub required_args: Vec<Arg>,
+    pub optional_args: Vec<Arg>,
+    pub kwargs: HashMap<&'static str, Arg>,
+}
+
 impl Command {
-    pub fn new(name: &'static str) -> Self{
-        Command {name, required_args: Vec::new(), optional_args: Vec::new(), kwargs: HashMap::new()}
+    pub fn new(name: &'static str, desc: &'static str) -> Self {
+        Command {name, desc, required_args: Vec::new(), optional_args: Vec::new(), kwargs: HashMap::new()}
     }
 
     pub fn add_arg(&mut self, arg: Arg) {
@@ -131,28 +135,31 @@ impl Command {
                 continue;
             }
             
-            if let Some(arg) = self.kwargs.get(next_arg.to_lowercase().as_str()) {
-                // if we can match named args, then done with optional
-                if do_optional {
-                    do_optional = false;
-                }
+            match self.kwargs.get(next_arg.to_lowercase().as_str()) {
+                Some(arg) => {
+                    // if we can match named args, then done with optional
+                    if do_optional {
+                        do_optional = false;
+                    }
 
-                let val: Box<dyn Value> = match raw_args.next() {
-                    Some(mut next) => parse_arg!(arg, next, raw_args),
-                    None => return Err(RedisError::WrongArity)
-                };
-                
-                res.insert(arg.arg, val);
-            } else {
-                // match optional args
-                if do_optional && optional_pos < self.optional_args.len() {
-                    let arg = &self.optional_args[optional_pos];
-
-                    let val: Box<dyn Value> = parse_arg!(arg, next_arg, raw_args);
+                    let val: Box<dyn Value> = match raw_args.next() {
+                        Some(mut next) => parse_arg!(arg, next, raw_args),
+                        None => return Err(RedisError::WrongArity)
+                    };
+                    
                     res.insert(arg.arg, val);
-                    optional_pos += 1;
-                } else {
-                    return Err(RedisError::String(format!("Unexpected arg {}", next_arg)))
+                },
+                None => {
+                    // match optional args
+                    if do_optional && optional_pos < self.optional_args.len() {
+                        let arg = &self.optional_args[optional_pos];
+
+                        let val: Box<dyn Value> = parse_arg!(arg, next_arg, raw_args);
+                        res.insert(arg.arg, val);
+                        optional_pos += 1;
+                    } else {
+                        return Err(RedisError::String(format!("Unexpected arg {}", next_arg)))
+                    }
                 }
             }
         }
@@ -293,6 +300,7 @@ pub enum Collection {
 #[derive(Debug)]
 pub struct Arg {
     pub arg: &'static str,
+    pub desc: &'static str,
     pub arg_type: ArgType,
     pub type_name: &'static str,
     pub kind: Collection,
@@ -300,8 +308,8 @@ pub struct Arg {
 }
 
 impl Arg {
-    pub fn new(arg: &'static str, arg_type: ArgType, type_name: &'static str, kind: Collection, default: Option<Box<dyn Value>>) -> Self {
-        Arg {arg, arg_type, type_name, kind, default}
+    pub fn new(arg: &'static str, desc: &'static str, arg_type: ArgType, type_name: &'static str, kind: Collection, default: Option<Box<dyn Value>>) -> Self {
+        Arg {arg, desc, arg_type, type_name, kind, default}
     }
 }
 
@@ -315,36 +323,6 @@ impl std::cmp::PartialEq for Arg {
     }
 }
 
-#[macro_export]
-macro_rules! argument {
-    ([
-        $arg:expr,
-        $argtype:expr,
-        $type:ty,
-        $kind:expr,
-        $default:expr
-    ]) => {
-        $crate::Arg::new($arg, $argtype, std::any::type_name::<$type>(), $kind, $default)
-    };
-}
-
-#[macro_export]
-macro_rules! command {
-    (
-        name: $name:expr,
-        args: [
-            $($arg:tt),* $(,)*
-        ] $(,)*
-    ) => {{
-        let mut _cmd = $crate::Command::new($name);
-        $(
-            let arg = argument!($arg);
-            _cmd.add_arg(arg);
-        )*
-        _cmd
-    }};
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Arg, Command, ArgType, Collection};
@@ -355,19 +333,20 @@ mod tests {
     fn macro_test() {
         let cmd = command!{
             name: "test",
+            desc: "foo",
             args: [
-                ["stringarg", ArgType::Arg, String, Collection::Unit, None],
-                ["uintarg", ArgType::Kwarg, u64, Collection::Unit, Some(Box::new(1_u64))],
-                ["intarg", ArgType::Kwarg, i64, Collection::Unit, Some(Box::new(1_i64))],
-                ["floatarg", ArgType::Kwarg, f64, Collection::Unit, Some(Box::new(1_f64))],
+                ["stringarg", "a string", ArgType::Arg, String, Collection::Unit, None],
+                ["uintarg", "an uint", ArgType::Kwarg, u64, Collection::Unit, Some(Box::new(1_u64))],
+                ["intarg", "an int", ArgType::Kwarg, i64, Collection::Unit, Some(Box::new(1_i64))],
+                ["floatarg", "a float", ArgType::Kwarg, f64, Collection::Unit, Some(Box::new(1_f64))],
             ],
         };
 
-        let mut exp = Command::new("test");
-        let arg1 = Arg::new("stringarg", ArgType::Arg, std::any::type_name::<String>(), Collection::Unit, None);
-        let arg2 = Arg::new("uintarg", ArgType::Kwarg, std::any::type_name::<u64>(), Collection::Unit, Some(Box::new(1_u64)));
-        let arg3 = Arg::new("intarg", ArgType::Kwarg, std::any::type_name::<i64>(), Collection::Unit, Some(Box::new(1_i64)));
-        let arg4 = Arg::new("floatarg", ArgType::Kwarg, std::any::type_name::<f64>(), Collection::Unit, Some(Box::new(1_f64)));
+        let mut exp = Command::new("test", "foo");
+        let arg1 = Arg::new("stringarg", "a string", ArgType::Arg, std::any::type_name::<String>(), Collection::Unit, None);
+        let arg2 = Arg::new("uintarg", "an uint", ArgType::Kwarg, std::any::type_name::<u64>(), Collection::Unit, Some(Box::new(1_u64)));
+        let arg3 = Arg::new("intarg", "an int", ArgType::Kwarg, std::any::type_name::<i64>(), Collection::Unit, Some(Box::new(1_i64)));
+        let arg4 = Arg::new("floatarg", "a float", ArgType::Kwarg, std::any::type_name::<f64>(), Collection::Unit, Some(Box::new(1_f64)));
         exp.add_arg(arg1);
         exp.add_arg(arg2);
         exp.add_arg(arg3);
@@ -380,12 +359,13 @@ mod tests {
     fn parse_args_test() {
         let cmd = command!{
             name: "test",
+            desc: "foo",
             args: [
-                ["required", ArgType::Arg, String, Collection::Unit, None],
-                ["optional", ArgType::Arg, String, Collection::Unit, Some(Box::new("foo".to_owned()))],
-                ["uintarg", ArgType::Kwarg, u64, Collection::Unit, Some(Box::new(1_u64))],
-                ["intarg", ArgType::Kwarg, i64, Collection::Unit, None],
-                ["floatarg", ArgType::Kwarg, f64, Collection::Unit, None],
+                ["required", "bar", ArgType::Arg, String, Collection::Unit, None],
+                ["optional", "baz", ArgType::Arg, String, Collection::Unit, Some(Box::new("foo".to_owned()))],
+                ["uintarg", "an uint", ArgType::Kwarg, u64, Collection::Unit, Some(Box::new(1_u64))],
+                ["intarg", "an int", ArgType::Kwarg, i64, Collection::Unit, None],
+                ["floatarg", "a float", ArgType::Kwarg, f64, Collection::Unit, None],
             ],
         };
 
@@ -432,11 +412,12 @@ mod tests {
     fn parse_vec_args_test() {
         let cmd = command!{
             name: "test",
+            desc: "test desc",
             args: [
-                ["foo", ArgType::Arg, String, Collection::Unit, None],
-                ["vec1", ArgType::Arg, u64, Collection::Vec, None],
-                ["vec2", ArgType::Kwarg, i64, Collection::Vec, None],
-                ["fizz", ArgType::Kwarg, String, Collection::Unit, None],
+                ["foo", "bar", ArgType::Arg, String, Collection::Unit, None],
+                ["vec1", "a vec of u64", ArgType::Arg, u64, Collection::Vec, None],
+                ["vec2", "a vec of i64", ArgType::Kwarg, i64, Collection::Vec, None],
+                ["fizz", "buzz", ArgType::Kwarg, String, Collection::Unit, None],
             ],
         };
 
