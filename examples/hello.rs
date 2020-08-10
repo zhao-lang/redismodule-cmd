@@ -1,3 +1,5 @@
+#![feature(thread_local_internals)]
+
 #[macro_use]
 extern crate redis_module;
 
@@ -5,9 +7,10 @@ extern crate redis_module;
 extern crate redismodule_cmd;
 
 use redis_module::{Context, RedisError, RedisValue, RedisResult};
-use redismodule_cmd::{Command, ArgType, Collection};
+use redismodule_cmd::{Command, ArgType, Collection, rediscmd_doc};
 
 thread_local! {
+    #[rediscmd_doc]
     static CMD: Command = command!{
         name: "hello.foo",
         desc: "hello command example",

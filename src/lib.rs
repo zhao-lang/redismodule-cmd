@@ -1,5 +1,9 @@
 extern crate redis_module;
+extern crate redismodule_cmd_procmacros;
 extern crate itertools;
+
+#[cfg(feature = "docgen")]
+pub use redismodule_cmd_procmacros::rediscmd_doc;
 
 use std::any::{Any, type_name};
 use std::collections::HashMap;
@@ -11,6 +15,7 @@ use itertools::Itertools;
 
 #[macro_use]
 mod macros;
+
 
 thread_local! {
     static TN_STRING: &'static str = type_name::<String>();
