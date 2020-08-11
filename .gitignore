@@ -10,3 +10,4 @@ Cargo.lock
 **/*.rs.bk
 
 /.vscode/
+/doc/COMMAND_REFERENCE_GEN.md

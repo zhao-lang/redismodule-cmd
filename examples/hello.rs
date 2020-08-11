@@ -10,7 +10,7 @@ use redis_module::{Context, RedisError, RedisValue, RedisResult};
 use redismodule_cmd::{Command, ArgType, Collection, rediscmd_doc};
 
 thread_local! {
-    #[rediscmd_doc]
+    #[rediscmd_doc(clean)]
     static CMD: Command = command!{
         name: "hello.foo",
         desc: "hello command example",
