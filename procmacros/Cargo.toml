@@ -1,0 +1,19 @@
+[package]
+name = "redismodule_cmd_procmacros"
+version = "0.1.0"
+authors = ["Zhao Lang <eltoshan@gmail.com>"]
+edition = "2018"
+description = "proc macros for redismodules_cmd"
+license = "Apache-2.0"
+repository = "https://github.com/zhao-lang/redismodule-cmd"
+exclude = [".gitignore", ".github/**"]
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "1.0.36", features = ["full", "extra-traits"] }
+proc-macro2 = { version = "1.0", features = ["nightly"] }

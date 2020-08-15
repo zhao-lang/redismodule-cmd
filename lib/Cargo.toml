@@ -1,0 +1,29 @@
+[package]
+name = "redismodule_cmd"
+version = "0.1.0"
+authors = ["Zhao Lang <eltoshan@gmail.com>"]
+edition = "2018"
+description = "A command parser for redis modules"
+license = "Apache-2.0"
+repository = "https://github.com/zhao-lang/redismodule-cmd"
+exclude = [".gitignore", ".github/**"]
+readme = "README.md"
+
+[features]
+default = []
+docgen = []
+
+[[example]]
+name = "hello"
+crate-type = ["cdylib"]
+required-features = [ "docgen" ]
+
+[dependencies]
+redis-module = "0.10.0"
+dyn-clonable = "0.9.0"
+itertools = "0.9.0"
+redismodule_cmd_procmacros = { path = "../procmacros", version = "0.1.0" }
+
+[dev-dependencies]
+redis-module = { version = "0.10.0", features = ["test"] }
+

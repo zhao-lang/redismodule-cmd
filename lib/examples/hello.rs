@@ -1,5 +1,3 @@
-#![feature(thread_local_internals)]
-
 #[macro_use]
 extern crate redis_module;
 
