@@ -4,8 +4,8 @@ extern crate redis_module;
 #[macro_use]
 extern crate redismodule_cmd;
 
-use redis_module::{Context, RedisError, RedisValue, RedisResult};
-use redismodule_cmd::{Command, ArgType, Collection, rediscmd_doc};
+use redis_module::{Context, RedisError, RedisResult, RedisValue};
+use redismodule_cmd::{rediscmd_doc, ArgType, Collection, Command};
 
 thread_local! {
     #[rediscmd_doc(clean)]
@@ -22,9 +22,7 @@ thread_local! {
 }
 
 fn hello_foo(_: &Context, args: Vec<String>) -> RedisResult {
-    let mut parsed = CMD.with(|cmd| {
-        cmd.parse_args(args)
-    })?;
+    let mut parsed = CMD.with(|cmd| cmd.parse_args(args))?;
 
     let input = parsed.remove("input").unwrap().as_string()?;
     let opt = parsed.remove("optional").unwrap().as_string()?;
@@ -68,7 +66,17 @@ mod tests {
 
     #[test]
     fn hello_foo_valid_args() {
-        let result = run_hello_foo(&vec!["hello.foo", "bar", "n", "2", "vec1", "3", "1", "1", "1"]);
+        let result = run_hello_foo(&vec![
+            "hello.foo",
+            "bar",
+            "n",
+            "2",
+            "vec1",
+            "3",
+            "1",
+            "1",
+            "1",
+        ]);
 
         match result {
             Ok(RedisValue::Array(v)) => {
@@ -76,7 +84,7 @@ mod tests {
                     RedisValue::BulkString("bar".to_owned()),
                     RedisValue::BulkString("bar".to_owned()),
                     RedisValue::BulkString("baz".to_owned()),
-                    RedisValue::Integer(3)
+                    RedisValue::Integer(3),
                 ];
                 assert_eq!(v, exp);
             }

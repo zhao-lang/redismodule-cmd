@@ -8,7 +8,14 @@ macro_rules! argument {
         $kind:expr,
         $default:expr
     ]) => {
-        $crate::Arg::new($arg, $desc, $argtype, std::any::type_name::<$type>(), $kind, $default)
+        $crate::Arg::new(
+            $arg,
+            $desc,
+            $argtype,
+            std::any::type_name::<$type>(),
+            $kind,
+            $default,
+        )
     };
 }
 
