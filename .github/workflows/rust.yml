@@ -1,9 +1,5 @@
 name: Rust
 
-defaults:
-  run:
-    working-directory: ./lib
-
 on:
   push:
     branches: [ master ]
@@ -37,4 +33,4 @@ jobs:
       uses: actions-rs/cargo@v1
       with:
         command: test
-        args: --verbose --example hello --features docgen
+        args: --verbose --example hello --features docgen --manifest-path lib/Cargo.toml
