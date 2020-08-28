@@ -33,6 +33,8 @@ let input = parsed.remove("arg name").unwrap().as_string|as_u64|as_i64|as_f64().
 
 ### Auto-generation of Command Reference
 
+> :warning: **requires nightly rust**
+
 The `rediscmd_doc` attribute marks a command for auto-generate of command reference.
 The command reference is generated on build to `./doc/COMMAND_REFERENCE_GEN.md`.
 The attribute takes an optional arg, e.g. `#[rediscmd_doc(clean)]` to clear the file

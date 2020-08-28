@@ -35,6 +35,7 @@ pub fn rediscmd_doc(attr: TokenStream, item: TokenStream) -> TokenStream {
             if let proc_macro2::TokenTree::Group(g) = token {
                 let cmd = parse_command(g.stream());
                 output = stringify_command(cmd);
+                break;
             }
         }
     }
